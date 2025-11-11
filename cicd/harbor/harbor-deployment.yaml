@@ -1,0 +1,303 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: harbor
+---
+# Harbor PostgreSQL Database
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: harbor-db-pv
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+  - ReadWriteOnce
+  hostPath:
+    path: /mnt/local-storage/harbor-db
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-storage
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - k8s-node2
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: harbor-db-pvc
+  namespace: harbor
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: local-storage
+---
+# Harbor Registry Storage
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: harbor-registry-pv
+spec:
+  capacity:
+    storage: 50Gi
+  accessModes:
+  - ReadWriteOnce
+  hostPath:
+    path: /mnt/local-storage/harbor-registry
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-storage
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - k8s-node2
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: harbor-registry-pvc
+  namespace: harbor
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: local-storage
+---
+# Harbor Database Secrets
+apiVersion: v1
+kind: Secret
+metadata:
+  name: harbor-database-secret
+  namespace: harbor
+type: Opaque
+data:
+  POSTGRES_PASSWORD: SGFyYm9yQDIwMjUh  # Harbor@2025!
+  POSTGRES_USER: aGFyYm9y  # harbor
+  POSTGRES_DB: aGFyYm9y  # harbor
+---
+# Harbor Core Secrets
+apiVersion: v1
+kind: Secret
+metadata:
+  name: harbor-core-secret
+  namespace: harbor
+type: Opaque
+data:
+  HARBOR_ADMIN_PASSWORD: SGFyYm9yQWRtaW5AMjAyNSE=  # HarborAdmin@2025!
+  SECRET_KEY: SGFyYm9yU2VjcmV0S2V5MjAyNQ==  # HarborSecretKey2025
+---
+# Harbor PostgreSQL Database
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: harbor-database
+  namespace: harbor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: harbor-database
+  template:
+    metadata:
+      labels:
+        app: harbor-database
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/worker: "true"
+      containers:
+      - name: postgresql
+        image: postgres:15
+        ports:
+        - containerPort: 5432
+        env:
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: harbor-database-secret
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: harbor-database-secret
+              key: POSTGRES_PASSWORD
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: harbor-database-secret
+              key: POSTGRES_DB
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        volumeMounts:
+        - name: harbor-db-storage
+          mountPath: /var/lib/postgresql/data
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+      volumes:
+      - name: harbor-db-storage
+        persistentVolumeClaim:
+          claimName: harbor-db-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: harbor-database-service
+  namespace: harbor
+spec:
+  ports:
+  - port: 5432
+    targetPort: 5432
+  selector:
+    app: harbor-database
+---
+# Harbor Redis
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: harbor-redis
+  namespace: harbor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: harbor-redis
+  template:
+    metadata:
+      labels:
+        app: harbor-redis
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/worker: "true"
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+        command: ["redis-server"]
+        args: ["--appendonly", "yes"]
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "200m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: harbor-redis
+  namespace: harbor
+spec:
+  ports:
+  - port: 6379
+    targetPort: 6379
+  selector:
+    app: harbor-redis
+---
+# Harbor Core
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: harbor-core
+  namespace: harbor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: harbor-core
+  template:
+    metadata:
+      labels:
+        app: harbor-core
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/worker: "true"
+      containers:
+      - name: harbor-core
+        image: goharbor/harbor-core:v2.9.1
+        ports:
+        - containerPort: 8080
+        env:
+        - name: CORE_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: harbor-core-secret
+              key: SECRET_KEY
+        - name: DATABASE_TYPE
+          value: "postgresql"
+        - name: POSTGRESQL_HOST
+          value: "harbor-database-service"
+        - name: POSTGRESQL_PORT
+          value: "5432"
+        - name: POSTGRESQL_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: harbor-database-secret
+              key: POSTGRES_USER
+        - name: POSTGRESQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: harbor-database-secret
+              key: POSTGRES_PASSWORD
+        - name: POSTGRESQL_DATABASE
+          valueFrom:
+            secretKeyRef:
+              name: harbor-database-secret
+              key: POSTGRES_DB
+        - name: HARBOR_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: harbor-core-secret
+              key: HARBOR_ADMIN_PASSWORD
+        - name: REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY
+          value: "/storage"
+        - name: _REDIS_URL_CORE
+          value: "redis://harbor-redis:6379/0"
+        - name: _REDIS_URL_REG
+          value: "redis://harbor-redis:6379/1"
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        volumeMounts:
+        - name: harbor-registry-storage
+          mountPath: /storage
+      volumes:
+      - name: harbor-registry-storage
+        persistentVolumeClaim:
+          claimName: harbor-registry-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: harbor-service
+  namespace: harbor
+spec:
+  type: NodePort
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+    nodePort: 30280
+  selector:
+    app: harbor-core

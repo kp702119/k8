@@ -1,0 +1,681 @@
+================================================================================
+              COMPLETE CI/CD PIPELINE SETUP GUIDE
+================================================================================
+Using: GitHub → Jenkins → Harbor → ArgoCD → Kubernetes
+
+================================================================================
+                         ARCHITECTURE OVERVIEW
+================================================================================
+
+1. Developer pushes code to GitHub repository
+2. GitHub webhook triggers Jenkins pipeline
+3. Jenkins builds Docker image and pushes to Harbor
+4. Jenkins updates Kubernetes manifest in GitOps repository
+5. ArgoCD detects changes and deploys to Kubernetes
+6. Vault provides secrets to applications
+
+================================================================================
+                         PREREQUISITES
+================================================================================
+
+1. GitHub Account with repositories:
+   - Application repository (source code)
+   - GitOps repository (Kubernetes manifests)
+
+2. GitHub Personal Access Token:
+   - Go to: GitHub → Settings → Developer settings → Personal access tokens
+   - Generate new token with permissions:
+     ✓ repo (all)
+     ✓ admin:repo_hook
+   - Save the token securely
+
+3. All CI/CD tools running:
+   ✓ Jenkins: http://10.10.80.77:30180 (admin / vqRBOBYOUc2ci8ZltqTqbi)
+   ✓ Harbor: http://10.10.80.77:30280 (admin / Harbor12345)
+   ✓ ArgoCD: http://10.10.80.77:30443 (admin / jLvTCOHb-wfNeGE2)
+   ✓ Vault: http://10.10.80.77:30820
+
+================================================================================
+                    STEP 1: PREPARE YOUR APPLICATION
+================================================================================
+
+Example Application Structure:
+my-app/
+├── src/
+│   └── app.js
+├── Dockerfile
+├── package.json
+├── Jenkinsfile
+└── README.md
+
+Sample Node.js Application (app.js):
+```javascript
+const express = require('express');
+const app = express();
+const port = 3000;
+
+app.get('/', (req, res) => {
+  res.json({
+    message: 'Hello from CI/CD Pipeline!',
+    version: process.env.APP_VERSION || '1.0.0',
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'healthy' });
+});
+
+app.listen(port, () => {
+  console.log(`App listening at http://localhost:${port}`);
+});
+```
+
+Sample Dockerfile:
+```dockerfile
+FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm install --production
+COPY . .
+EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+CMD ["node", "app.js"]
+```
+
+Sample package.json:
+```json
+{
+  "name": "my-cicd-app",
+  "version": "1.0.0",
+  "description": "Sample application for CI/CD pipeline",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "test": "echo \"Running tests...\" && exit 0"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
+```
+
+================================================================================
+                    STEP 2: CREATE GITOPS REPOSITORY
+================================================================================
+
+GitOps Repository Structure:
+gitops-repo/
+├── my-app/
+│   ├── deployment.yaml
+│   ├── service.yaml
+│   └── kustomization.yaml
+└── README.md
+
+Sample deployment.yaml:
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+  namespace: production
+  labels:
+    app: my-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: my-app
+  template:
+    metadata:
+      labels:
+        app: my-app
+    spec:
+      containers:
+      - name: my-app
+        image: 10.10.80.77:30280/library/my-app:latest
+        ports:
+        - containerPort: 3000
+        env:
+        - name: APP_VERSION
+          value: "1.0.0"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      imagePullSecrets:
+      - name: harbor-credentials
+```
+
+Sample service.yaml:
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-app-service
+  namespace: production
+spec:
+  type: NodePort
+  ports:
+  - port: 80
+    targetPort: 3000
+    nodePort: 30500
+  selector:
+    app: my-app
+```
+
+================================================================================
+                    STEP 3: CONFIGURE JENKINS
+================================================================================
+
+A. Install Required Plugins (Already done):
+   ✓ Git plugin
+   ✓ GitHub plugin
+   ✓ Docker Pipeline
+   ✓ Kubernetes plugin
+   ✓ Credentials Binding
+
+B. Add GitHub Credentials:
+   1. Jenkins → Manage Jenkins → Credentials
+   2. Click "System" → "Global credentials"
+   3. Add Credentials:
+      - Kind: Secret text
+      - Secret: <your-github-token>
+      - ID: github-token
+      - Description: GitHub Access Token
+
+C. Add Harbor Credentials:
+   1. Add Credentials:
+      - Kind: Username with password
+      - Username: admin
+      - Password: Harbor12345
+      - ID: harbor-credentials
+      - Description: Harbor Registry
+
+D. Configure Docker in Jenkins:
+   Run this command to configure Jenkins pod:
+   ```bash
+   kubectl exec -n cicd jenkins-0 -c jenkins -- sh -c "
+   mkdir -p /var/jenkins_home/.docker
+   cat > /var/jenkins_home/.docker/config.json << EOF
+   {
+     \"insecure-registries\": [\"10.10.80.77:30280\"]
+   }
+   EOF
+   "
+   ```
+
+E. Create Jenkins Pipeline Job:
+   1. Jenkins → New Item
+   2. Enter name: my-app-pipeline
+   3. Select: Pipeline
+   4. Pipeline section:
+      - Definition: Pipeline script from SCM
+      - SCM: Git
+      - Repository URL: https://github.com/YOUR-USERNAME/my-app.git
+      - Credentials: github-token
+      - Branch: */main
+      - Script Path: Jenkinsfile
+
+================================================================================
+                    STEP 4: CREATE JENKINSFILE
+================================================================================
+
+Add this Jenkinsfile to your application repository:
+
+```groovy
+pipeline {
+    agent any
+    
+    environment {
+        HARBOR_URL = '10.10.80.77:30280'
+        HARBOR_PROJECT = 'library'
+        APP_NAME = 'my-app'
+        IMAGE_TAG = "${env.BUILD_NUMBER}"
+        GITOPS_REPO = 'https://github.com/YOUR-USERNAME/gitops-repo.git'
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                echo 'Checking out source code...'
+                checkout scm
+            }
+        }
+        
+        stage('Test') {
+            steps {
+                echo 'Running tests...'
+                sh 'npm install'
+                sh 'npm test'
+            }
+        }
+        
+        stage('Build Docker Image') {
+            steps {
+                echo "Building Docker image: ${HARBOR_URL}/${HARBOR_PROJECT}/${APP_NAME}:${IMAGE_TAG}"
+                script {
+                    docker.build("${HARBOR_URL}/${HARBOR_PROJECT}/${APP_NAME}:${IMAGE_TAG}")
+                }
+            }
+        }
+        
+        stage('Push to Harbor') {
+            steps {
+                echo 'Pushing image to Harbor registry...'
+                script {
+                    docker.withRegistry("http://${HARBOR_URL}", 'harbor-credentials') {
+                        docker.image("${HARBOR_URL}/${HARBOR_PROJECT}/${APP_NAME}:${IMAGE_TAG}").push()
+                        docker.image("${HARBOR_URL}/${HARBOR_PROJECT}/${APP_NAME}:${IMAGE_TAG}").push('latest')
+                    }
+                }
+            }
+        }
+        
+        stage('Update GitOps Repository') {
+            steps {
+                echo 'Updating Kubernetes manifests in GitOps repository...'
+                withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
+                    sh '''
+                        git config --global user.email "jenkins@cicd.local"
+                        git config --global user.name "Jenkins CI"
+                        
+                        # Clone GitOps repository
+                        rm -rf gitops-repo
+                        git clone https://${GITHUB_TOKEN}@github.com/YOUR-USERNAME/gitops-repo.git
+                        cd gitops-repo
+                        
+                        # Update image tag in deployment
+                        sed -i "s|image: ${HARBOR_URL}/${HARBOR_PROJECT}/${APP_NAME}:.*|image: ${HARBOR_URL}/${HARBOR_PROJECT}/${APP_NAME}:${IMAGE_TAG}|" my-app/deployment.yaml
+                        
+                        # Commit and push changes
+                        git add my-app/deployment.yaml
+                        git commit -m "Update ${APP_NAME} to version ${IMAGE_TAG}"
+                        git push origin main
+                    '''
+                }
+            }
+        }
+        
+        stage('Trigger ArgoCD Sync') {
+            steps {
+                echo 'ArgoCD will automatically detect changes and deploy...'
+                // Optional: Force sync via ArgoCD CLI
+                sh '''
+                    echo "Image ${IMAGE_TAG} pushed to Harbor"
+                    echo "GitOps repo updated"
+                    echo "ArgoCD will deploy automatically"
+                '''
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo "✅ Pipeline completed successfully!"
+            echo "Image: ${HARBOR_URL}/${HARBOR_PROJECT}/${APP_NAME}:${IMAGE_TAG}"
+        }
+        failure {
+            echo "❌ Pipeline failed!"
+        }
+        always {
+            echo 'Cleaning up...'
+            sh 'docker system prune -f || true'
+        }
+    }
+}
+```
+
+================================================================================
+                    STEP 5: CONFIGURE HARBOR
+================================================================================
+
+A. Login to Harbor: http://10.10.80.77:30280
+   - Username: admin
+   - Password: Harbor12345
+
+B. Create Project (if not using 'library'):
+   1. Projects → + NEW PROJECT
+   2. Project Name: my-project
+   3. Access Level: Public (or Private)
+   4. Click OK
+
+C. Configure Docker on Worker Nodes:
+   ```bash
+   # SSH to each worker node and run:
+   sudo tee /etc/docker/daemon.json <<EOF
+   {
+     "insecure-registries": ["10.10.80.77:30280"]
+   }
+   EOF
+   
+   sudo systemctl restart docker
+   ```
+
+D. Create Kubernetes Secret for Harbor:
+   ```bash
+   kubectl create namespace production
+   
+   kubectl create secret docker-registry harbor-credentials \
+     --docker-server=10.10.80.77:30280 \
+     --docker-username=admin \
+     --docker-password=Harbor12345 \
+     --docker-email=admin@example.com \
+     -n production
+   ```
+
+================================================================================
+                    STEP 6: CONFIGURE ARGOCD
+================================================================================
+
+A. Login to ArgoCD:
+   ```bash
+   # Via CLI
+   argocd login 10.10.80.77:30443 --insecure \
+     --username admin \
+     --password jLvTCOHb-wfNeGE2
+   ```
+
+B. Add GitOps Repository:
+   ```bash
+   # Public repository
+   argocd repo add https://github.com/YOUR-USERNAME/gitops-repo.git
+   
+   # Private repository
+   argocd repo add https://github.com/YOUR-USERNAME/gitops-repo.git \
+     --username YOUR-USERNAME \
+     --password YOUR-GITHUB-TOKEN
+   ```
+
+C. Create ArgoCD Application:
+   ```bash
+   argocd app create my-app \
+     --repo https://github.com/YOUR-USERNAME/gitops-repo.git \
+     --path my-app \
+     --dest-server https://kubernetes.default.svc \
+     --dest-namespace production \
+     --sync-policy automated \
+     --auto-prune \
+     --self-heal
+   ```
+
+   Or create via YAML:
+   ```yaml
+   apiVersion: argoproj.io/v1alpha1
+   kind: Application
+   metadata:
+     name: my-app
+     namespace: cicd
+   spec:
+     project: default
+     source:
+       repoURL: https://github.com/YOUR-USERNAME/gitops-repo.git
+       targetRevision: HEAD
+       path: my-app
+     destination:
+       server: https://kubernetes.default.svc
+       namespace: production
+     syncPolicy:
+       automated:
+         prune: true
+         selfHeal: true
+       syncOptions:
+       - CreateNamespace=true
+   ```
+
+   Apply:
+   ```bash
+   kubectl apply -f argocd-app.yaml
+   ```
+
+D. Verify Application:
+   ```bash
+   argocd app list
+   argocd app get my-app
+   ```
+
+================================================================================
+                    STEP 7: CONFIGURE GITHUB WEBHOOK
+================================================================================
+
+A. In GitHub Repository (my-app):
+   1. Settings → Webhooks → Add webhook
+   2. Payload URL: http://10.10.80.77:30180/github-webhook/
+   3. Content type: application/json
+   4. Events: Just the push event
+   5. Active: ✓
+   6. Add webhook
+
+B. Test Webhook:
+   1. Make a code change
+   2. Commit and push to GitHub
+   3. Jenkins should automatically trigger pipeline
+
+================================================================================
+                    STEP 8: DEPLOY AND TEST
+================================================================================
+
+A. Manual Pipeline Trigger:
+   1. Go to Jenkins: http://10.10.80.77:30180
+   2. Click on "my-app-pipeline"
+   3. Click "Build Now"
+
+B. Monitor Pipeline:
+   - Jenkins: Watch build progress
+   - Harbor: Check if image is pushed
+   - ArgoCD: Watch deployment status
+   - Kubernetes: Check pod status
+
+C. Check Application:
+   ```bash
+   # Wait for pods to be ready
+   kubectl get pods -n production -w
+   
+   # Check application
+   kubectl get svc -n production
+   
+   # Test application
+   curl http://10.10.80.77:30500
+   ```
+
+D. View ArgoCD Deployment:
+   1. ArgoCD UI: http://10.10.80.77:30443
+   2. Login and view "my-app"
+   3. See deployment status and sync history
+
+================================================================================
+                    STEP 9: COMPLETE WORKFLOW TEST
+================================================================================
+
+Test the Complete CI/CD Flow:
+
+1. Make a code change:
+   ```bash
+   # Edit app.js
+   echo "Updated version" >> src/app.js
+   git add .
+   git commit -m "Update application"
+   git push origin main
+   ```
+
+2. GitHub webhook triggers Jenkins ✓
+
+3. Jenkins builds and pushes to Harbor ✓
+
+4. Jenkins updates GitOps repo ✓
+
+5. ArgoCD detects change and deploys ✓
+
+6. Application updates in Kubernetes ✓
+
+Monitor the flow:
+```bash
+# Watch Jenkins
+http://10.10.80.77:30180
+
+# Watch Harbor
+http://10.10.80.77:30280
+
+# Watch ArgoCD
+http://10.10.80.77:30443
+
+# Watch Kubernetes
+kubectl get pods -n production -w
+```
+
+================================================================================
+                    STEP 10: ADD VAULT FOR SECRETS
+================================================================================
+
+A. Store Secrets in Vault:
+   ```bash
+   # Login to Vault
+   export VAULT_ADDR='http://10.10.80.77:30820'
+   export VAULT_TOKEN='<VAULT_ROOT_TOKEN>'
+   
+   # Enable KV secrets engine
+   vault secrets enable -path=secret kv-v2
+   
+   # Store application secrets
+   vault kv put secret/my-app \
+     db_password="supersecret123" \
+     api_key="my-api-key-xyz" \
+     jwt_secret="jwt-secret-token"
+   ```
+
+B. Configure Kubernetes to Use Vault:
+   Install Vault Agent Injector:
+   ```bash
+   helm repo add hashicorp https://helm.releases.hashicorp.com
+   helm install vault hashicorp/vault \
+     --set "injector.enabled=true" \
+     --set "injector.externalVaultAddr=http://10.10.80.77:30820"
+   ```
+
+C. Update Deployment to Use Vault:
+   ```yaml
+   apiVersion: apps/v1
+   kind: Deployment
+   metadata:
+     name: my-app
+   spec:
+     template:
+       metadata:
+         annotations:
+           vault.hashicorp.com/agent-inject: "true"
+           vault.hashicorp.com/role: "my-app"
+           vault.hashicorp.com/agent-inject-secret-config: "secret/data/my-app"
+       spec:
+         containers:
+         - name: my-app
+           image: 10.10.80.77:30280/library/my-app:latest
+   ```
+
+================================================================================
+                    TROUBLESHOOTING
+================================================================================
+
+Jenkins Issues:
+```bash
+# Check Jenkins logs
+kubectl logs -n cicd jenkins-0 -c jenkins -f
+
+# Check Docker in Jenkins pod
+kubectl exec -n cicd jenkins-0 -c jenkins -- docker version
+```
+
+Harbor Issues:
+```bash
+# Test Harbor connectivity
+curl http://10.10.80.77:30280/api/v2.0/systeminfo
+
+# Test Docker login
+docker login 10.10.80.77:30280 -u admin -p Harbor12345
+
+# Check Harbor pods
+kubectl get pods -n cicd -l app=harbor
+```
+
+ArgoCD Issues:
+```bash
+# Check ArgoCD status
+argocd app get my-app
+
+# Force sync
+argocd app sync my-app
+
+# Check ArgoCD logs
+kubectl logs -n cicd deployment/argocd-server
+```
+
+Application Issues:
+```bash
+# Check pods
+kubectl get pods -n production
+
+# Check logs
+kubectl logs -n production deployment/my-app
+
+# Describe pod
+kubectl describe pod -n production <pod-name>
+
+# Check events
+kubectl get events -n production --sort-by='.lastTimestamp'
+```
+
+================================================================================
+                    QUICK REFERENCE COMMANDS
+================================================================================
+
+# Build and push manually
+docker build -t 10.10.80.77:30280/library/my-app:v1.0 .
+docker push 10.10.80.77:30280/library/my-app:v1.0
+
+# Trigger Jenkins build
+curl -X POST http://admin:vqRBOBYOUc2ci8ZltqTqbi@10.10.80.77:30180/job/my-app-pipeline/build
+
+# ArgoCD sync
+argocd app sync my-app --force
+
+# Check application
+kubectl get all -n production
+curl http://10.10.80.77:30500
+
+# View logs
+kubectl logs -n production -l app=my-app -f
+
+================================================================================
+                    NEXT STEPS
+================================================================================
+
+1. ✓ Set up GitHub repositories (app + gitops)
+2. ✓ Configure Jenkins credentials
+3. ✓ Create Jenkinsfile in app repo
+4. ✓ Create Kubernetes manifests in gitops repo
+5. ✓ Configure ArgoCD application
+6. ✓ Set up GitHub webhook
+7. ✓ Test complete pipeline
+8. ✓ Add monitoring and alerts
+9. ✓ Implement staging environment
+10. ✓ Add automated testing
+
+================================================================================
+Last Updated: November 11, 2025
+Maintainer: CI/CD Pipeline Team
+================================================================================

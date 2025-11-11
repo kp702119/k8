@@ -1,0 +1,86 @@
+controller:
+  adminUser: "admin"
+  adminPassword: "JenkinsAdmin@2025!"
+  
+  serviceType: NodePort
+  nodePort: 30180
+  
+  # Install essential plugins
+  installPlugins:
+    - kubernetes:latest
+    - workflow-aggregator:latest
+    - git:latest
+    - github:latest
+    - configuration-as-code:latest
+    - docker-workflow:latest
+    - job-dsl:latest
+    - credentials-binding:latest
+    - timestamper:latest
+    - ws-cleanup:latest
+    - pipeline-stage-view:latest
+    - build-timeout:latest
+  
+  # Additional plugins will be installed automatically with dependencies
+  additionalPlugins:
+    - blueocean:latest
+    - github-branch-source:latest
+    - pipeline-github-lib:latest
+    - kubernetes-cli:latest
+    
+  # Resource configuration
+  resources:
+    requests:
+      cpu: "1000m"
+      memory: "2Gi"
+    limits:
+      cpu: "2000m"
+      memory: "4Gi"
+  
+  # JVM options
+  javaOpts: "-Xms2g -Xmx2g"
+  
+  # Jenkins configuration
+  JCasC:
+    defaultConfig: true
+    configScripts:
+      welcome-message: |
+        jenkins:
+          systemMessage: "🚀 Jenkins CI/CD Server - Deployed with Helm"
+          numExecutors: 2
+          
+  # Service account
+  serviceAccount:
+    create: true
+    name: jenkins
+    
+  # Security
+  securityRealm: |-
+    local:
+      allowsSignup: false
+      
+  authorizationStrategy: |-
+    loggedInUsersCanDoAnything:
+      allowAnonymousRead: false
+
+# Persistence configuration      
+persistence:
+  enabled: true
+  existingClaim: jenkins-pvc
+  storageClass: local-storage
+  size: 20Gi
+
+# Agent configuration
+agent:
+  enabled: true
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"
+
+# Node selector for worker nodes
+controller:
+  nodeSelector:
+    node-role.kubernetes.io/worker: "true"

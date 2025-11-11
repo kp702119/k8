@@ -1,0 +1,80 @@
+# ArgoCD Helm Values
+global:
+  domain: argocd.local
+
+# Server configuration
+server:
+  service:
+    type: NodePort
+    nodePortHttp: 30443
+    nodePortHttps: 30444
+  
+  # Admin password (bcrypt hash of "ArgoAdmin@2025!")
+  # Use: htpasswd -nbBC 10 "" ArgoAdmin@2025! | tr -d ':\n' | sed 's/$2y/$2a/'
+  # Or set it after installation
+  
+  extraArgs:
+    - --insecure  # Allow HTTP (for internal use)
+  
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Controller configuration  
+controller:
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+# Repo server configuration
+repoServer:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Redis configuration
+redis:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# Dex (SSO) - Disable if not needed
+dex:
+  enabled: false
+
+# Application Set Controller
+applicationSet:
+  enabled: true
+
+# Notifications controller
+notifications:
+  enabled: true
+
+# Node selector for worker nodes
+server:
+  nodeSelector:
+    node-role.kubernetes.io/worker: "true"
+    
+controller:
+  nodeSelector:
+    node-role.kubernetes.io/worker: "true"
+
+repoServer:
+  nodeSelector:
+    node-role.kubernetes.io/worker: "true"

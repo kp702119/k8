@@ -1,0 +1,612 @@
+================================================================================
+                        ARGOCD DOCUMENTATION
+================================================================================
+Date: November 11, 2025
+Version: v2.13.2
+Deployment: Helm Chart - argo/argo-cd
+
+================================================================================
+                              ACCESS INFORMATION
+================================================================================
+
+Service Access:
+- HTTPS URL: https://10.10.80.77:30443 (or https://10.10.80.78:30443)
+- HTTP URL: http://10.10.80.77:30444 (or http://10.10.80.78:30444)
+- Internal URL: https://argocd-server.cicd.svc.cluster.local
+- Namespace: cicd
+- Service Type: NodePort
+- HTTPS Port: 30443
+- HTTP Port: 30444
+
+Pod Information:
+- argocd-server: Running (1/1)
+- argocd-repo-server: Running (1/1)
+- argocd-application-controller: Running (1/1)
+- argocd-applicationset-controller: Running (1/1)
+- argocd-notifications-controller: Running (1/1)
+- argocd-redis: Running (1/1)
+
+Note: DEX server is disabled in this deployment
+
+================================================================================
+                              CREDENTIALS
+================================================================================
+
+Admin Credentials:
+- Username: admin
+- Password: jLvTCOHb-wfNeGE2
+
+Get Initial Password:
+kubectl get secret -n cicd argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+
+Change Password:
+argocd account update-password --account admin --current-password <old> --new-password <new>
+
+Or via kubectl:
+kubectl exec -n cicd deployment/argocd-server -- argocd account update-password
+
+================================================================================
+                              CONFIGURATION
+================================================================================
+
+Server Configuration:
+- Insecure Mode: Enabled (no TLS)
+- DEX: Disabled
+- Redis: Internal (argocd-redis)
+- Repository Server: argocd-repo-server
+- Application Controller: argocd-application-controller
+
+Features Enabled:
+✅ ApplicationSet Controller - Create multiple apps from templates
+✅ Notifications Controller - Alerts and notifications
+✅ Server-Side Apply - Kubernetes server-side apply
+✅ Application Status Badge - Status badges for apps
+
+Storage:
+- Type: EmptyDir (no persistent storage configured)
+- Note: For production, consider adding PVC for repo cache
+
+Resources:
+- Server: 500m CPU, 512Mi memory
+- Repo Server: 500m CPU, 512Mi memory
+- Controller: 1000m CPU, 1Gi memory
+
+================================================================================
+                              HELM MANAGEMENT
+================================================================================
+
+Chart Information:
+- Repository: argo (https://argoproj.github.io/argo-helm)
+- Chart Name: argo/argo-cd
+- Release Name: argocd
+- Namespace: cicd
+
+Check Status:
+helm status argocd -n cicd
+
+List Releases:
+helm list -n cicd
+
+Upgrade ArgoCD:
+helm upgrade argocd argo/argo-cd -n cicd -f /home/kp/oraganization-project/k8-cluster/cicd/argocd/argocd-values.yaml
+
+Rollback to Previous Version:
+helm rollback argocd -n cicd
+
+Uninstall ArgoCD:
+helm uninstall argocd -n cicd
+
+Get Current Values:
+helm get values argocd -n cicd
+
+================================================================================
+                              ARGOCD CLI SETUP
+================================================================================
+
+Install ArgoCD CLI:
+curl -sSL -o argocd-linux-amd64 https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+sudo install -m 555 argocd-linux-amd64 /usr/local/bin/argocd
+rm argocd-linux-amd64
+
+Login to ArgoCD:
+argocd login 10.10.80.77:30443 --insecure --username admin --password jLvTCOHb-wfNeGE2
+
+Or with interactive prompt:
+argocd login 10.10.80.77:30443 --insecure
+
+Verify Login:
+argocd account get-user-info
+
+================================================================================
+                              COMMON OPERATIONS
+================================================================================
+
+View Logs:
+kubectl logs -n cicd deployment/argocd-server
+kubectl logs -n cicd deployment/argocd-repo-server
+kubectl logs -n cicd deployment/argocd-application-controller
+
+Restart ArgoCD Components:
+kubectl rollout restart deployment/argocd-server -n cicd
+kubectl rollout restart deployment/argocd-repo-server -n cicd
+kubectl rollout restart statefulset/argocd-application-controller -n cicd
+
+Check Component Status:
+kubectl get pods -n cicd -l app.kubernetes.io/name=argocd-server
+kubectl get deployments -n cicd -l app.kubernetes.io/part-of=argocd
+
+Port Forward (Alternative Access):
+kubectl port-forward -n cicd svc/argocd-server 8080:443
+
+Access ArgoCD Shell:
+kubectl exec -it -n cicd deployment/argocd-server -- bash
+
+================================================================================
+                              APPLICATION MANAGEMENT
+================================================================================
+
+Create Application via CLI:
+argocd app create <app-name> \
+  --repo https://github.com/user/repo.git \
+  --path manifests \
+  --dest-server https://kubernetes.default.svc \
+  --dest-namespace default
+
+Create Application from YAML:
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: sample-app
+  namespace: cicd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/user/repo.git
+    targetRevision: HEAD
+    path: k8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+
+Apply:
+kubectl apply -f application.yaml
+
+List Applications:
+argocd app list
+
+Get Application Status:
+argocd app get <app-name>
+
+Sync Application:
+argocd app sync <app-name>
+
+Delete Application:
+argocd app delete <app-name>
+
+================================================================================
+                              GIT REPOSITORY MANAGEMENT
+================================================================================
+
+Add Git Repository (Public):
+argocd repo add https://github.com/user/repo.git
+
+Add Git Repository (Private - HTTPS):
+argocd repo add https://github.com/user/repo.git \
+  --username <username> \
+  --password <token>
+
+Add Git Repository (Private - SSH):
+argocd repo add git@github.com:user/repo.git \
+  --ssh-private-key-path ~/.ssh/id_rsa
+
+List Repositories:
+argocd repo list
+
+Remove Repository:
+argocd repo rm https://github.com/user/repo.git
+
+================================================================================
+                              PROJECT MANAGEMENT
+================================================================================
+
+Create Project:
+argocd proj create <project-name> \
+  --description "Project Description"
+
+Add Source Repository to Project:
+argocd proj add-source <project-name> https://github.com/user/repo.git
+
+Add Destination to Project:
+argocd proj add-destination <project-name> \
+  https://kubernetes.default.svc \
+  <namespace>
+
+List Projects:
+argocd proj list
+
+Get Project Details:
+argocd proj get <project-name>
+
+================================================================================
+                              SYNC POLICIES
+================================================================================
+
+Automated Sync (Self-Healing):
+spec:
+  syncPolicy:
+    automated:
+      prune: true      # Delete resources removed from Git
+      selfHeal: true   # Correct drift from Git state
+      allowEmpty: false
+
+Manual Sync:
+spec:
+  syncPolicy: {}
+
+Sync Windows:
+spec:
+  syncPolicy:
+    syncOptions:
+    - CreateNamespace=true
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+
+================================================================================
+                              GITOPS WORKFLOW EXAMPLES
+================================================================================
+
+Example 1: Deploy Application from GitHub
+1. Add repository:
+   argocd repo add https://github.com/user/myapp.git
+
+2. Create application:
+   argocd app create myapp \
+     --repo https://github.com/user/myapp.git \
+     --path k8s \
+     --dest-server https://kubernetes.default.svc \
+     --dest-namespace production \
+     --sync-policy automated
+
+3. Application will auto-deploy on Git commits
+
+Example 2: Multi-Environment Deployment
+apps/
+  dev/
+    kustomization.yaml
+    deployment.yaml
+  staging/
+    kustomization.yaml
+    deployment.yaml
+  production/
+    kustomization.yaml
+    deployment.yaml
+
+Create apps for each environment:
+argocd app create myapp-dev --repo ... --path apps/dev
+argocd app create myapp-staging --repo ... --path apps/staging
+argocd app create myapp-prod --repo ... --path apps/production
+
+Example 3: Helm Chart Deployment
+argocd app create redis \
+  --repo https://charts.bitnami.com/bitnami \
+  --helm-chart redis \
+  --revision 17.0.0 \
+  --dest-server https://kubernetes.default.svc \
+  --dest-namespace default
+
+================================================================================
+                              APPLICATIONSET EXAMPLES
+================================================================================
+
+Git Generator (Deploy from Multiple Repos):
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: cluster-apps
+  namespace: cicd
+spec:
+  generators:
+  - git:
+      repoURL: https://github.com/org/gitops-repo.git
+      revision: HEAD
+      directories:
+      - path: apps/*
+  template:
+    metadata:
+      name: '{{path.basename}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/org/gitops-repo.git
+        targetRevision: HEAD
+        path: '{{path}}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{path.basename}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+
+List Generator (Multiple Clusters):
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: multi-cluster-app
+spec:
+  generators:
+  - list:
+      elements:
+      - cluster: dev
+        url: https://dev.k8s.local
+      - cluster: prod
+        url: https://prod.k8s.local
+  template:
+    metadata:
+      name: 'app-{{cluster}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/org/app.git
+        path: k8s/{{cluster}}
+      destination:
+        server: '{{url}}'
+
+================================================================================
+                              NOTIFICATIONS
+================================================================================
+
+Configure Slack Notifications:
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-notifications-cm
+  namespace: cicd
+data:
+  service.slack: |
+    token: $slack-token
+  template.app-deployed: |
+    message: Application {{.app.metadata.name}} deployed!
+  trigger.on-deployed: |
+    - when: app.status.operationState.phase in ['Succeeded']
+      send: [app-deployed]
+
+Add Notification to Application:
+metadata:
+  annotations:
+    notifications.argoproj.io/subscribe.on-deployed.slack: channel-name
+
+================================================================================
+                              RBAC & ACCESS CONTROL
+================================================================================
+
+Create Read-Only User:
+kubectl patch configmap argocd-rbac-cm -n cicd --type merge -p '
+data:
+  policy.csv: |
+    p, role:readonly, applications, get, */*, allow
+    p, role:readonly, repositories, get, *, allow
+    g, readonly-user, role:readonly
+'
+
+Create Developer Role:
+data:
+  policy.csv: |
+    p, role:developer, applications, *, dev-project/*, allow
+    p, role:developer, repositories, get, *, allow
+    g, dev-user, role:developer
+
+List Users:
+argocd account list
+
+Update User Password:
+argocd account update-password --account <username>
+
+================================================================================
+                              MONITORING & HEALTH
+================================================================================
+
+Check Application Health:
+argocd app get <app-name>
+
+View Sync History:
+argocd app history <app-name>
+
+Application Resources:
+argocd app resources <app-name>
+
+Component Health:
+kubectl get pods -n cicd -l app.kubernetes.io/part-of=argocd
+
+View Metrics (Prometheus):
+# ArgoCD exposes metrics on port 8083
+kubectl port-forward -n cicd deployment/argocd-server 8083:8083
+curl http://localhost:8083/metrics
+
+================================================================================
+                              BACKUP & RECOVERY
+================================================================================
+
+Backup ArgoCD Configuration:
+# Backup applications
+kubectl get applications -n cicd -o yaml > argocd-apps-backup.yaml
+
+# Backup projects
+kubectl get appprojects -n cicd -o yaml > argocd-projects-backup.yaml
+
+# Backup repositories
+kubectl get secrets -n cicd -l argocd.argoproj.io/secret-type=repository -o yaml > argocd-repos-backup.yaml
+
+# Backup Helm values
+helm get values argocd -n cicd > argocd-helm-values-backup.yaml
+
+Export All ArgoCD Resources:
+kubectl get applications,appprojects,applicationsets -n cicd -o yaml > argocd-full-backup.yaml
+
+Restore ArgoCD:
+kubectl apply -f argocd-full-backup.yaml
+
+Disaster Recovery:
+1. helm install argocd argo/argo-cd -n cicd -f argocd-values.yaml
+2. kubectl apply -f argocd-repos-backup.yaml
+3. kubectl apply -f argocd-projects-backup.yaml
+4. kubectl apply -f argocd-apps-backup.yaml
+
+================================================================================
+                              TROUBLESHOOTING
+================================================================================
+
+Application Not Syncing:
+# Check application status
+argocd app get <app-name>
+
+# View sync errors
+kubectl describe application <app-name> -n cicd
+
+# Manual sync
+argocd app sync <app-name> --force
+
+Repository Connection Issues:
+# Test repository
+argocd repo get https://github.com/user/repo.git
+
+# Re-add repository
+argocd repo rm https://github.com/user/repo.git
+argocd repo add https://github.com/user/repo.git --username <user> --password <token>
+
+Server Not Accessible:
+# Check pods
+kubectl get pods -n cicd -l app.kubernetes.io/name=argocd-server
+
+# Check logs
+kubectl logs -n cicd deployment/argocd-server
+
+# Restart server
+kubectl rollout restart deployment/argocd-server -n cicd
+
+Application Controller Issues:
+# Check controller logs
+kubectl logs -n cicd statefulset/argocd-application-controller
+
+# Restart controller
+kubectl rollout restart statefulset/argocd-application-controller -n cicd
+
+Out of Sync Status:
+# Compare Git vs Cluster
+argocd app diff <app-name>
+
+# Force sync
+argocd app sync <app-name> --force --prune
+
+================================================================================
+                              SECURITY BEST PRACTICES
+================================================================================
+
+1. Authentication:
+   - Change default admin password immediately
+   - Enable SSO (GitHub, GitLab, LDAP, OIDC)
+   - Use RBAC for fine-grained access control
+
+2. Repository Security:
+   - Use SSH keys instead of passwords
+   - Rotate credentials regularly
+   - Limit repository access per project
+
+3. Application Security:
+   - Use projects to isolate applications
+   - Define allowed source repositories
+   - Define allowed destination clusters/namespaces
+
+4. Network Security:
+   - Enable TLS in production
+   - Use ingress with TLS termination
+   - Implement network policies
+
+5. Secret Management:
+   - Integrate with Vault for secrets
+   - Use sealed-secrets or external-secrets
+   - Never commit secrets to Git
+
+================================================================================
+                              INTEGRATION WITH CI/CD
+================================================================================
+
+Jenkins + ArgoCD Pipeline:
+pipeline {
+    agent any
+    stages {
+        stage('Build') {
+            steps {
+                sh 'docker build -t myapp:${BUILD_NUMBER} .'
+            }
+        }
+        stage('Push to Registry') {
+            steps {
+                sh 'docker push harbor.local/myapp:${BUILD_NUMBER}'
+            }
+        }
+        stage('Update GitOps Repo') {
+            steps {
+                sh '''
+                    git clone https://github.com/org/gitops-repo.git
+                    cd gitops-repo
+                    sed -i "s|image: myapp:.*|image: myapp:${BUILD_NUMBER}|" k8s/deployment.yaml
+                    git commit -am "Update image to ${BUILD_NUMBER}"
+                    git push
+                '''
+            }
+        }
+    }
+}
+# ArgoCD will detect the change and auto-deploy
+
+GitHub Actions + ArgoCD:
+name: Deploy
+on: [push]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Update image tag
+        run: |
+          sed -i "s|image: myapp:.*|image: myapp:$GITHUB_SHA|" k8s/deployment.yaml
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git commit -am "Deploy $GITHUB_SHA"
+          git push
+
+================================================================================
+                              FILES & RESOURCES
+================================================================================
+
+Helm Values File:
+/home/kp/oraganization-project/k8-cluster/cicd/argocd/argocd-values.yaml
+
+Backup YAML Files (Deprecated):
+/home/kp/oraganization-project/k8-cluster/cicd/argocd/argocd-*.yaml
+
+Official Documentation:
+https://argo-cd.readthedocs.io/
+
+Helm Chart Documentation:
+https://github.com/argoproj/argo-helm
+
+Best Practices:
+https://argo-cd.readthedocs.io/en/stable/user-guide/best_practices/
+
+================================================================================
+Last Updated: November 11, 2025
+Maintainer: CI/CD Pipeline Team
+================================================================================

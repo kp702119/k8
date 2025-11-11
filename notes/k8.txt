@@ -1,0 +1,450 @@
+# Kubernetes Cluster Setup with Rancher - Complete Guide
+# Author: Setup Guide for Ubuntu 22.04
+# Date: November 4, 2025
+
+===========================================
+KUBERNETES CLUSTER SETUP WITH RANCHER
+Complete Step-by-Step Guide for Beginners
+===========================================
+
+INFRASTRUCTURE:
+- Master Node: 10.10.80.76 (ubuntu 22.04)
+- Worker Node 1: 10.10.80.77 (ubuntu 22.04)  
+- Worker Node 2: 10.10.80.78 (ubuntu 22.04)
+
+===========================================
+SECTION 1: PREREQUISITES AND PREPARATION
+===========================================
+
+1.1 UPDATE ALL SERVERS
+Run on ALL three servers (76, 77, 78):
+
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y curl wget apt-transport-https ca-certificates gnupg lsb-release
+
+1.2 DISABLE SWAP ON ALL SERVERS
+Run on ALL three servers:
+
+sudo swapoff -a
+sudo sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
+
+1.3 CONFIGURE HOSTNAMES
+Run on Master (10.10.80.76):
+sudo hostnamectl set-hostname k8s-master
+
+Run on Node 1 (10.10.80.77):
+sudo hostnamectl set-hostname k8s-node1
+
+Run on Node 2 (10.10.80.78):
+sudo hostnamectl set-hostname k8s-node2
+
+1.4 UPDATE /etc/hosts FILE ON ALL SERVERS
+Add these lines to /etc/hosts on ALL servers:
+
+sudo tee -a /etc/hosts <<EOF
+10.10.80.76 k8s-master
+10.10.80.77 k8s-node1  
+10.10.80.78 k8s-node2
+EOF
+
+1.5 CONFIGURE FIREWALL (if enabled)
+Run on ALL servers:
+
+# For master node (run only on 10.10.80.76):
+sudo ufw allow 6443/tcp
+sudo ufw allow 2379:2380/tcp
+sudo ufw allow 10250/tcp
+sudo ufw allow 10259/tcp
+sudo ufw allow 10257/tcp
+
+# For worker nodes (run on 10.10.80.77 and 10.10.80.78):
+sudo ufw allow 10250/tcp
+sudo ufw allow 30000:32767/tcp
+
+# For Rancher (run on master):
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw allow 9345/tcp
+
+===========================================
+SECTION 2: INSTALL CONTAINER RUNTIME (DOCKER)
+===========================================
+
+2.1 INSTALL DOCKER ON ALL SERVERS
+Run on ALL three servers:
+
+# Add Docker's official GPG key:
+sudo mkdir -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+
+# Add Docker repository:
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# Install Docker:
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+# Start and enable Docker:
+sudo systemctl start docker
+sudo systemctl enable docker
+
+# Add your user to docker group:
+sudo usermod -aG docker $USER
+
+2.2 CONFIGURE CONTAINERD
+Run on ALL servers:
+
+sudo mkdir -p /etc/containerd
+containerd config default | sudo tee /etc/containerd/config.toml
+
+# Enable SystemdCgroup in containerd:
+sudo sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
+
+# Restart containerd:
+sudo systemctl restart containerd
+sudo systemctl enable containerd
+
+===========================================
+SECTION 3: INSTALL KUBERNETES COMPONENTS
+===========================================
+
+3.1 ADD KUBERNETES REPOSITORY
+Run on ALL servers:
+
+# Add Kubernetes signing key:
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.28/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+# Add Kubernetes repository:
+echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.28/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+
+3.2 INSTALL KUBERNETES PACKAGES
+Run on ALL servers:
+
+sudo apt update
+sudo apt install -y kubelet kubeadm kubectl
+sudo apt-mark hold kubelet kubeadm kubectl
+
+# Enable kubelet:
+sudo systemctl enable kubelet
+
+3.3 CONFIGURE KERNEL MODULES
+Run on ALL servers:
+
+# Load required modules:
+sudo modprobe overlay
+sudo modprobe br_netfilter
+
+# Make modules persistent:
+cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
+overlay
+br_netfilter
+EOF
+
+# Configure sysctl parameters:
+cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
+net.bridge.bridge-nf-call-iptables  = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+net.ipv4.ip_forward                 = 1
+EOF
+
+# Apply sysctl parameters:
+sudo sysctl --system
+
+===========================================
+SECTION 4: INITIALIZE KUBERNETES CLUSTER
+===========================================
+
+4.1 INITIALIZE MASTER NODE
+Run ONLY on Master (10.10.80.76):
+
+sudo kubeadm init \
+  --apiserver-advertise-address=10.10.80.76 \
+  --pod-network-cidr=10.244.0.0/16 \
+  --control-plane-endpoint=10.10.80.76
+
+# IMPORTANT: Save the join command from the output!
+# It will look like:
+# kubeadm join 10.10.80.76:6443 --token <token> --discovery-token-ca-cert-hash sha256:<hash>
+
+4.2 CONFIGURE KUBECTL FOR REGULAR USER
+Run ONLY on Master (10.10.80.76):
+
+mkdir -p $HOME/.kube
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+4.3 VERIFY MASTER NODE
+Run on Master:
+
+kubectl get nodes
+kubectl get pods -A
+
+===========================================
+SECTION 5: INSTALL CNI NETWORK PLUGIN
+===========================================
+
+5.1 INSTALL FLANNEL
+Run ONLY on Master (10.10.80.76):
+
+kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+
+# Wait for flannel pods to be ready:
+kubectl get pods -n kube-flannel
+
+===========================================
+SECTION 6: JOIN WORKER NODES
+===========================================
+
+6.1 JOIN WORKER NODES TO CLUSTER
+Run on Worker Node 1 (10.10.80.77) and Worker Node 2 (10.10.80.78):
+
+# Use the join command from step 4.1 (replace with your actual token and hash):
+sudo kubeadm join 10.10.80.76:6443 \
+  --token <your-token> \
+  --discovery-token-ca-cert-hash sha256:<your-hash>
+
+# If you lost the join command, generate a new one on master:
+# kubeadm token create --print-join-command
+
+6.2 VERIFY CLUSTER
+Run on Master (10.10.80.76):
+
+kubectl get nodes
+# All nodes should show "Ready" status
+
+kubectl get pods -A
+# All system pods should be "Running"
+
+===========================================
+SECTION 7: INSTALL HELM (for Rancher)
+===========================================
+
+7.1 INSTALL HELM ON MASTER
+Run ONLY on Master (10.10.80.76):
+
+curl https://baltocdn.com/helm/signing.asc | gpg --dearmor | sudo tee /usr/share/keyrings/helm.gpg > /dev/null
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/helm.gpg] https://baltocdn.com/helm/stable/debian/ all main" | sudo tee /etc/apt/sources.list.d/helm-stable-debian.list
+
+sudo apt update
+sudo apt install helm
+
+# Verify installation:
+helm version
+
+===========================================
+SECTION 8: INSTALL CERT-MANAGER
+===========================================
+
+8.1 INSTALL CERT-MANAGER
+Run on Master (10.10.80.76):
+
+# Add cert-manager repository:
+helm repo add jetstack https://charts.jetstack.io
+helm repo update
+
+# Install cert-manager:
+kubectl create namespace cert-manager
+helm install cert-manager jetstack/cert-manager \
+  --namespace cert-manager \
+  --version v1.13.0 \
+  --set installCRDs=true
+
+# Verify installation:
+kubectl get pods -n cert-manager
+
+===========================================
+SECTION 9: INSTALL RANCHER
+===========================================
+
+9.1 ADD RANCHER HELM REPOSITORY
+Run on Master (10.10.80.76):
+
+helm repo add rancher-latest https://releases.rancher.com/server-charts/latest
+helm repo update
+
+9.2 CREATE RANCHER NAMESPACE
+kubectl create namespace cattle-system
+
+9.3 INSTALL RANCHER
+Run on Master (10.10.80.76):
+
+# Install Rancher with self-signed certificates:
+helm install rancher rancher-latest/rancher \
+  --namespace cattle-system \
+  --set hostname=10.10.80.76 \
+  --set bootstrapPassword=admin123456 \
+  --set ingress.tls.source=rancher \
+  --set replicas=1
+
+# Wait for Rancher deployment:
+kubectl -n cattle-system rollout status deploy/rancher
+
+# Verify Rancher pods:
+kubectl get pods -n cattle-system
+
+===========================================
+SECTION 10: ACCESS RANCHER UI
+===========================================
+
+10.1 EXPOSE RANCHER SERVICE
+Run on Master (10.10.80.76):
+
+# Check Rancher service:
+kubectl get svc -n cattle-system
+
+# If you need to expose via NodePort:
+kubectl patch svc rancher -n cattle-system -p '{"spec":{"type":"NodePort"}}'
+
+# Get the NodePort:
+kubectl get svc rancher -n cattle-system
+
+10.2 ACCESS RANCHER
+1. Open browser and go to: https://10.10.80.76 (or the NodePort if configured)
+2. Accept the self-signed certificate warning
+3. Login with username: admin, password: admin123456
+4. Follow the setup wizard
+
+===========================================
+SECTION 11: POST-INSTALLATION VERIFICATION
+===========================================
+
+11.1 CLUSTER HEALTH CHECK
+Run on Master:
+
+# Check all nodes:
+kubectl get nodes -o wide
+
+# Check all pods:
+kubectl get pods -A
+
+# Check cluster info:
+kubectl cluster-info
+
+# Check Rancher status:
+kubectl get pods -n cattle-system
+kubectl get svc -n cattle-system
+
+11.2 TEST DEPLOYMENT
+Create a test deployment:
+
+kubectl create deployment nginx-test --image=nginx:latest
+kubectl expose deployment nginx-test --port=80 --target-port=80 --type=NodePort
+kubectl get svc nginx-test
+
+# Access the service on any node IP with the assigned NodePort
+
+===========================================
+SECTION 12: USEFUL COMMANDS AND TROUBLESHOOTING
+===========================================
+
+12.1 COMMON KUBECTL COMMANDS
+# View cluster information:
+kubectl cluster-info
+kubectl get nodes
+kubectl get pods -A
+kubectl get svc -A
+
+# View logs:
+kubectl logs <pod-name> -n <namespace>
+kubectl describe pod <pod-name> -n <namespace>
+
+# View Rancher logs:
+kubectl logs -n cattle-system -l app=rancher
+
+12.2 RESTART SERVICES
+# Restart kubelet:
+sudo systemctl restart kubelet
+
+# Restart docker:
+sudo systemctl restart docker
+
+# Restart containerd:
+sudo systemctl restart containerd
+
+12.3 RESET CLUSTER (if needed)
+# On all nodes:
+sudo kubeadm reset
+sudo rm -rf /etc/kubernetes/
+sudo rm -rf ~/.kube/
+sudo rm -rf /var/lib/etcd/
+
+12.4 GENERATE NEW JOIN TOKEN
+# On master:
+kubeadm token create --print-join-command
+
+12.5 BACKUP ETCD (Important!)
+# On master:
+sudo cp -r /var/lib/etcd /var/lib/etcd-backup-$(date +%Y%m%d-%H%M%S)
+
+===========================================
+SECTION 13: SECURITY RECOMMENDATIONS
+===========================================
+
+13.1 CHANGE DEFAULT PASSWORDS
+- Change Rancher admin password after first login
+- Create additional users with appropriate roles
+
+13.2 ENABLE RBAC
+- Use Role-Based Access Control for users
+- Create specific roles for different team members
+
+13.3 NETWORK SECURITY
+- Configure proper firewall rules
+- Use network policies to restrict pod-to-pod communication
+- Consider using a service mesh for advanced security
+
+13.4 REGULAR MAINTENANCE
+- Keep Kubernetes components updated
+- Update Rancher regularly
+- Monitor cluster health
+- Regular backups of etcd
+
+===========================================
+SECTION 14: NEXT STEPS
+===========================================
+
+1. Explore Rancher UI and familiarize yourself with the interface
+2. Deploy sample applications through Rancher
+3. Set up monitoring with Prometheus and Grafana
+4. Configure backup solutions
+5. Learn about Kubernetes concepts: Pods, Services, Deployments, etc.
+6. Explore Rancher's catalog for easy application deployment
+
+===========================================
+TROUBLESHOOTING COMMON ISSUES
+===========================================
+
+ISSUE 1: Pods stuck in Pending state
+SOLUTION: Check if CNI plugin is installed and running
+
+ISSUE 2: Nodes not joining cluster
+SOLUTION: Verify firewall rules and network connectivity
+
+ISSUE 3: Rancher UI not accessible
+SOLUTION: Check service status and port forwarding
+
+ISSUE 4: Certificate errors
+SOLUTION: Verify cert-manager installation and certificates
+
+For more help, check:
+- Kubernetes documentation: https://kubernetes.io/docs/
+- Rancher documentation: https://rancher.com/docs/
+- Community forums and GitHub issues
+
+===========================================
+COMPLETION CHECKLIST
+===========================================
+
+□ All three servers updated and configured
+□ Docker installed on all servers
+□ Kubernetes components installed
+□ Master node initialized
+□ Worker nodes joined successfully
+□ CNI network plugin installed
+□ Helm installed
+□ Cert-manager deployed
+□ Rancher installed and accessible
+□ Test deployment successful
+□ Backup procedures understood
+
+Your Kubernetes cluster with Rancher is now ready for use!

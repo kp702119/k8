@@ -1,0 +1,568 @@
+================================================================================
+                        HARBOR DOCUMENTATION
+================================================================================
+Date: November 11, 2025
+Version: Latest
+Deployment: Manual YAML
+
+================================================================================
+                              ACCESS INFORMATION
+================================================================================
+
+Service Access:
+- URL: http://10.10.80.77:30280 (or http://10.10.80.78:30280)
+- Internal URL: http://harbor-core.cicd.svc.cluster.local
+- Namespace: cicd
+- Service Type: NodePort
+- HTTP Port: 30280
+
+Pod Information:
+- harbor-core: Running (1/1)
+- harbor-database: Running (1/1)
+- harbor-redis: Running (1/1)
+
+Note: Partial deployment - core registry functionality available
+
+================================================================================
+                              CREDENTIALS
+================================================================================
+
+Default Admin Credentials:
+- Username: admin
+- Password: Harbor12345
+
+Note: Change default password immediately after first login!
+
+Change Password:
+1. Login to Harbor web UI
+2. Click on "admin" in top-right corner
+3. Select "Change Password"
+4. Enter old password and new password
+
+Docker Registry Credentials:
+- Registry URL: 10.10.80.77:30280
+- Username: admin
+- Password: Harbor12345 (or your changed password)
+
+================================================================================
+                              CONFIGURATION
+================================================================================
+
+Core Components:
+✅ Harbor Core - Main API server
+✅ PostgreSQL Database - Metadata storage
+✅ Redis - Session and cache storage
+⚠️  Limited deployment - missing some components
+
+Database Configuration:
+- Type: PostgreSQL
+- Host: harbor-database
+- Port: 5432
+- Database: registry
+- User: postgres
+- Password: (stored in secret)
+
+Redis Configuration:
+- Host: harbor-redis
+- Port: 6379
+- Used for: Session storage, job queue
+
+Storage:
+- Type: EmptyDir (ephemeral)
+- Note: For production, configure persistent storage
+- Recommendation: Add PVC for registry data
+
+================================================================================
+                              DOCKER REGISTRY USAGE
+================================================================================
+
+Configure Docker to Use Harbor:
+# Add insecure registry (since we're using HTTP)
+sudo vi /etc/docker/daemon.json
+
+Add:
+{
+  "insecure-registries": ["10.10.80.77:30280", "10.10.80.78:30280"]
+}
+
+# Restart Docker
+sudo systemctl restart docker
+
+Login to Harbor Registry:
+docker login 10.10.80.77:30280
+Username: admin
+Password: Harbor12345
+
+Verify Login:
+docker login 10.10.80.77:30280 -u admin -p Harbor12345
+
+================================================================================
+                              IMAGE MANAGEMENT
+================================================================================
+
+Tag Image for Harbor:
+docker tag <image-name>:<tag> 10.10.80.77:30280/<project>/<image-name>:<tag>
+
+Example:
+docker tag nginx:latest 10.10.80.77:30280/library/nginx:latest
+
+Push Image to Harbor:
+docker push 10.10.80.77:30280/<project>/<image-name>:<tag>
+
+Example:
+docker push 10.10.80.77:30280/library/nginx:latest
+
+Pull Image from Harbor:
+docker pull 10.10.80.77:30280/<project>/<image-name>:<tag>
+
+Example:
+docker pull 10.10.80.77:30280/library/nginx:latest
+
+List Images:
+# Via web UI: http://10.10.80.77:30280
+# Navigate to Projects > library > Repositories
+
+================================================================================
+                              PROJECT MANAGEMENT
+================================================================================
+
+Create Project via Web UI:
+1. Login to Harbor
+2. Click "Projects" in left menu
+3. Click "+ NEW PROJECT"
+4. Enter project name
+5. Set access level (Public/Private)
+6. Click "OK"
+
+Default Project:
+- Name: library
+- Access: Public
+- Purpose: Default repository for images
+
+Private Project Example:
+- Name: production
+- Access: Private
+- Purpose: Production images only
+
+================================================================================
+                              KUBERNETES INTEGRATION
+================================================================================
+
+Create Docker Registry Secret:
+kubectl create secret docker-registry harbor-credentials \
+  --docker-server=10.10.80.77:30280 \
+  --docker-username=admin \
+  --docker-password=Harbor12345 \
+  --docker-email=admin@example.com \
+  -n <namespace>
+
+Use in Pod Deployment:
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+spec:
+  template:
+    spec:
+      containers:
+      - name: app
+        image: 10.10.80.77:30280/library/my-app:v1.0
+      imagePullSecrets:
+      - name: harbor-credentials
+
+Test Image Pull:
+kubectl run test-pod --image=10.10.80.77:30280/library/nginx:latest --image-pull-policy=Always
+
+================================================================================
+                              JENKINS INTEGRATION
+================================================================================
+
+Add Harbor Credentials to Jenkins:
+1. Manage Jenkins > Credentials > System > Global credentials
+2. Click "Add Credentials"
+3. Kind: Username with password
+4. Username: admin
+5. Password: Harbor12345
+6. ID: harbor-credentials
+7. Description: Harbor Registry
+
+Jenkins Pipeline Example:
+pipeline {
+    agent any
+    environment {
+        HARBOR_URL = '10.10.80.77:30280'
+        HARBOR_PROJECT = 'library'
+        IMAGE_NAME = 'my-app'
+        IMAGE_TAG = "${env.BUILD_NUMBER}"
+    }
+    stages {
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    docker.build("${HARBOR_URL}/${HARBOR_PROJECT}/${IMAGE_NAME}:${IMAGE_TAG}")
+                }
+            }
+        }
+        stage('Push to Harbor') {
+            steps {
+                script {
+                    docker.withRegistry("http://${HARBOR_URL}", 'harbor-credentials') {
+                        docker.image("${HARBOR_URL}/${HARBOR_PROJECT}/${IMAGE_NAME}:${IMAGE_TAG}").push()
+                        docker.image("${HARBOR_URL}/${HARBOR_PROJECT}/${IMAGE_NAME}:${IMAGE_TAG}").push('latest')
+                    }
+                }
+            }
+        }
+    }
+}
+
+================================================================================
+                              COMMON OPERATIONS
+================================================================================
+
+View Harbor Logs:
+kubectl logs -n cicd deployment/harbor-core
+kubectl logs -n cicd deployment/harbor-database
+kubectl logs -n cicd deployment/harbor-redis
+
+Restart Harbor Components:
+kubectl rollout restart deployment/harbor-core -n cicd
+kubectl rollout restart deployment/harbor-database -n cicd
+kubectl rollout restart deployment/harbor-redis -n cicd
+
+Check Service Status:
+kubectl get pods -n cicd -l app=harbor
+kubectl get svc harbor-core -n cicd
+
+Access Harbor Shell:
+kubectl exec -it -n cicd deployment/harbor-core -- sh
+
+Check Database:
+kubectl exec -it -n cicd deployment/harbor-database -- psql -U postgres -d registry
+
+Port Forward (Alternative Access):
+kubectl port-forward -n cicd svc/harbor-core 8080:80
+
+================================================================================
+                              USER MANAGEMENT
+================================================================================
+
+Create User via Web UI:
+1. Login as admin
+2. Administration > Users
+3. Click "+ NEW USER"
+4. Fill in details:
+   - Username
+   - Email
+   - First Name
+   - Last Name
+   - Password
+5. Click "OK"
+
+Assign User to Project:
+1. Go to Projects > Select project
+2. Click "Members" tab
+3. Click "+ USER"
+4. Select user
+5. Select role (Project Admin, Master, Developer, Guest)
+6. Click "OK"
+
+User Roles:
+- Project Admin: Full control of project
+- Master: Read/Write access to project
+- Developer: Read/Write access to repositories
+- Guest: Read-only access
+
+================================================================================
+                              REPLICATION
+================================================================================
+
+Note: Replication requires full Harbor deployment with harbor-jobservice
+
+Setup Replication (if available):
+1. Administration > Replications
+2. Click "+ NEW REPLICATION RULE"
+3. Configure:
+   - Name
+   - Source registry/project
+   - Destination registry
+   - Filters (name, tag, labels)
+   - Trigger (Manual, Scheduled, Event Based)
+4. Click "OK"
+
+================================================================================
+                              VULNERABILITY SCANNING
+================================================================================
+
+Note: Vulnerability scanning requires Trivy or Clair integration
+
+Enable Scanning (when available):
+1. Projects > Select project > Configuration
+2. Enable "Automatically scan images on push"
+3. Click "SAVE"
+
+Manual Scan:
+1. Navigate to repository
+2. Select image tag
+3. Click "SCAN"
+
+================================================================================
+                              GARBAGE COLLECTION
+================================================================================
+
+Run Garbage Collection:
+1. Administration > Garbage Collection
+2. Click "GC NOW"
+3. Or schedule periodic cleanup
+
+Purpose:
+- Remove unused image layers
+- Free up storage space
+- Clean up deleted artifacts
+
+================================================================================
+                              BACKUP & RECOVERY
+================================================================================
+
+Backup Harbor Database:
+kubectl exec -n cicd deployment/harbor-database -- \
+  pg_dump -U postgres registry > harbor-db-backup-$(date +%Y%m%d).sql
+
+Backup Harbor Configuration:
+kubectl get cm -n cicd harbor-config -o yaml > harbor-config-backup.yaml
+kubectl get secrets -n cicd -l app=harbor -o yaml > harbor-secrets-backup.yaml
+
+Backup Docker Images:
+# Pull all images from Harbor
+# Re-push to backup registry or export as tar
+
+Full Deployment Backup:
+kubectl get all -n cicd -l app=harbor -o yaml > harbor-deployment-backup.yaml
+
+Restore Harbor:
+# Restore database
+kubectl exec -i -n cicd deployment/harbor-database -- \
+  psql -U postgres registry < harbor-db-backup.sql
+
+# Restore configuration
+kubectl apply -f harbor-config-backup.yaml
+kubectl apply -f harbor-secrets-backup.yaml
+
+================================================================================
+                              TROUBLESHOOTING
+================================================================================
+
+Cannot Login to Harbor:
+# Check core pod status
+kubectl get pods -n cicd -l app=harbor-core
+kubectl logs -n cicd deployment/harbor-core
+
+# Check database connection
+kubectl exec -it -n cicd deployment/harbor-database -- psql -U postgres -d registry -c "SELECT 1;"
+
+# Restart core service
+kubectl rollout restart deployment/harbor-core -n cicd
+
+Cannot Push/Pull Images:
+# Verify Docker is configured for insecure registry
+cat /etc/docker/daemon.json
+
+# Check harbor-core service
+kubectl get svc harbor-core -n cicd
+
+# Test connectivity
+curl http://10.10.80.77:30280/api/v2.0/systeminfo
+
+# Re-login to Docker
+docker logout 10.10.80.77:30280
+docker login 10.10.80.77:30280
+
+Harbor Web UI Not Accessible:
+# Check pod status
+kubectl get pods -n cicd -l app=harbor-core
+
+# Check service
+kubectl get svc harbor-core -n cicd
+
+# Port forward for debugging
+kubectl port-forward -n cicd svc/harbor-core 8080:80
+
+Database Connection Issues:
+# Check database pod
+kubectl get pods -n cicd -l app=harbor-database
+kubectl logs -n cicd deployment/harbor-database
+
+# Test database connection
+kubectl exec -it -n cicd deployment/harbor-core -- nc -zv harbor-database 5432
+
+Redis Connection Issues:
+# Check Redis pod
+kubectl get pods -n cicd -l app=harbor-redis
+kubectl logs -n cicd deployment/harbor-redis
+
+# Test Redis connection
+kubectl exec -it -n cicd deployment/harbor-core -- nc -zv harbor-redis 6379
+
+================================================================================
+                              SECURITY BEST PRACTICES
+================================================================================
+
+1. Authentication:
+   ⚠️  Change default admin password immediately
+   - Use strong passwords (min 8 chars, mixed case, numbers, symbols)
+   - Enable LDAP/AD integration for centralized auth
+   - Consider OIDC for SSO
+
+2. Authorization:
+   - Use project-based access control
+   - Follow principle of least privilege
+   - Regularly audit user permissions
+   - Remove inactive users
+
+3. Image Security:
+   - Enable vulnerability scanning (requires full deployment)
+   - Sign images with Notary (requires full deployment)
+   - Use image policies to prevent vulnerable images
+   - Regularly update base images
+
+4. Network Security:
+   ⚠️  Enable HTTPS in production
+   - Use TLS certificates
+   - Implement network policies
+   - Restrict access to Harbor API
+
+5. Storage Security:
+   ⚠️  Configure persistent storage in production
+   - Encrypt data at rest
+   - Backup regularly
+   - Implement retention policies
+
+================================================================================
+                              PRODUCTION CONSIDERATIONS
+================================================================================
+
+Current Limitations:
+⚠️  Using HTTP instead of HTTPS
+⚠️  No persistent storage (EmptyDir)
+⚠️  Partial deployment (missing components)
+⚠️  Default admin password
+
+Production Recommendations:
+1. Deploy full Harbor using Helm chart
+2. Configure persistent volumes
+3. Enable HTTPS with valid certificates
+4. Integrate with external PostgreSQL
+5. Enable high availability (multiple replicas)
+6. Configure backup automation
+7. Enable vulnerability scanning (Trivy)
+8. Set up image replication
+9. Implement monitoring and alerting
+10. Use external storage (S3, Azure Blob, etc.)
+
+Harbor Helm Installation (Recommended):
+# Add Harbor Helm repository
+helm repo add harbor https://helm.goharbor.io
+helm repo update
+
+# Create values file
+cat > harbor-helm-values.yaml <<EOF
+expose:
+  type: nodePort
+  nodePort:
+    ports:
+      http:
+        nodePort: 30280
+externalURL: https://harbor.example.com
+persistence:
+  enabled: true
+  persistentVolumeClaim:
+    registry:
+      size: 50Gi
+    database:
+      size: 10Gi
+harborAdminPassword: "ChangeMe123!"
+EOF
+
+# Install Harbor
+helm install harbor harbor/harbor -n cicd -f harbor-helm-values.yaml
+
+================================================================================
+                              API USAGE
+================================================================================
+
+Get System Info:
+curl -X GET "http://10.10.80.77:30280/api/v2.0/systeminfo" -H "accept: application/json"
+
+Login and Get Token:
+curl -X POST "http://10.10.80.77:30280/c/login" \
+  -d "principal=admin&password=Harbor12345"
+
+List Projects:
+curl -X GET "http://10.10.80.77:30280/api/v2.0/projects" \
+  -H "Authorization: Basic YWRtaW46SGFyYm9yMTIzNDU=" \
+  -H "accept: application/json"
+
+List Repositories:
+curl -X GET "http://10.10.80.77:30280/api/v2.0/projects/library/repositories" \
+  -H "Authorization: Basic YWRtaW46SGFyYm9yMTIzNDU=" \
+  -H "accept: application/json"
+
+List Image Tags:
+curl -X GET "http://10.10.80.77:30280/api/v2.0/projects/library/repositories/<repo-name>/artifacts" \
+  -H "Authorization: Basic YWRtaW46SGFyYm9yMTIzNDU=" \
+  -H "accept: application/json"
+
+API Documentation:
+http://10.10.80.77:30280/devcenter-api-2.0
+
+================================================================================
+                              FILES & RESOURCES
+================================================================================
+
+Deployment File:
+/home/kp/oraganization-project/k8-cluster/cicd/harbor/harbor-deployment.yaml
+
+Official Documentation:
+https://goharbor.io/docs/
+
+Harbor GitHub:
+https://github.com/goharbor/harbor
+
+Helm Chart:
+https://github.com/goharbor/harbor-helm
+
+API Documentation:
+https://goharbor.io/docs/edge/build-customize-contribute/configure-swagger/
+
+================================================================================
+                              QUICK REFERENCE
+================================================================================
+
+Essential Commands:
+# Docker login
+docker login 10.10.80.77:30280 -u admin -p Harbor12345
+
+# Tag image
+docker tag myapp:v1 10.10.80.77:30280/library/myapp:v1
+
+# Push image
+docker push 10.10.80.77:30280/library/myapp:v1
+
+# Pull image
+docker pull 10.10.80.77:30280/library/myapp:v1
+
+# Check Harbor pods
+kubectl get pods -n cicd -l app=harbor
+
+# View Harbor logs
+kubectl logs -n cicd deployment/harbor-core
+
+Access URLs:
+- Web UI: http://10.10.80.77:30280
+- API: http://10.10.80.77:30280/api/v2.0/
+- API Docs: http://10.10.80.77:30280/devcenter-api-2.0
+
+================================================================================
+Last Updated: November 11, 2025
+Maintainer: CI/CD Pipeline Team
+================================================================================
