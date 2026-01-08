@@ -15,22 +15,22 @@ echo "===================================="
 echo "📦 Storing Database Secrets..."
 
 vault kv put secret/wingyip-srs/staging/administration/database \
-  connectionstring="Data Source=tcp:10.10.80.75,1433;Initial Catalog=WingYip_SRS_Administration_Database;User Id=sa;Password=1n9pp2.0@123;TrustServerCertificate=True;Encrypt=False"
+  connectionstring="Data Source=tcp:10.10.80.81,1433;Initial Catalog=WingYip_SRS_Administration_Database_stage;User Id=sa;Password=1n9pp2.0@123;TrustServerCertificate=True;Encrypt=False"
 
 vault kv put secret/wingyip-srs/staging/audit/database \
-  connectionstring="Data Source=tcp:10.10.80.75,1433;Initial Catalog=WingYip_SRS_Audit_Database;User Id=sa;Password=1n9pp2.0@123;TrustServerCertificate=True;Encrypt=False"
+  connectionstring="Data Source=tcp:10.10.80.81,1433;Initial Catalog=WingYip_SRS_Audit_Database_stage;User Id=sa;Password=1n9pp2.0@123;TrustServerCertificate=True;Encrypt=False"
 
 vault kv put secret/wingyip-srs/staging/authentication/database \
-  connectionstring="Data Source=tcp:10.10.80.75,1433;Initial Catalog=WingYip_SRS_Authentication_Database;User Id=sa;Password=1n9pp2.0@123;TrustServerCertificate=True;Encrypt=False"
+  connectionstring="Data Source=tcp:10.10.80.81,1433;Initial Catalog=WingYip_SRS_Authentication_Database_stage;User Id=sa;Password=1n9pp2.0@123;TrustServerCertificate=True;Encrypt=False"
 
 vault kv put secret/wingyip-srs/staging/product/database \
-  connectionstring="Data Source=tcp:10.10.80.81,1433;Initial Catalog=WingYip_SRS_Product_Database;User Id=sa;Password=1n9pp2.0@123;TrustServerCertificate=True;Encrypt=False"
+  connectionstring="Data Source=tcp:10.10.80.81,1433;Initial Catalog=WingYip_SRS_Product_Database_stage;User Id=sa;Password=1n9pp2.0@123;TrustServerCertificate=True;Encrypt=False"
 
 vault kv put secret/wingyip-srs/staging/spaceman/database \
-  connectionstring="Data Source=tcp:10.10.80.81,1433;Initial Catalog=WingYip_SRS_Spaceman_Database;User Id=sa;Password=1n9pp2.0@123;TrustServerCertificate=True;Encrypt=False"
+  connectionstring="Data Source=tcp:10.10.80.81,1433;Initial Catalog=WingYip_SRS_Spaceman_Database_stage;User Id=sa;Password=1n9pp2.0@123;TrustServerCertificate=True;Encrypt=False"
 
 vault kv put secret/wingyip-srs/staging/stockcontrol/database \
-  connectionstring="Data Source=tcp:10.10.80.81,1433;Initial Catalog=WingYip_SRS_StockControl_Database;User Id=sa;Password=1n9pp2.0@123;TrustServerCertificate=True;Encrypt=False"
+  connectionstring="Data Source=tcp:10.10.80.81,1433;Initial Catalog=WingYip_SRS_StockControl_Database_stage;User Id=sa;Password=1n9pp2.0@123;TrustServerCertificate=True;Encrypt=False"
 
 # Product Service Configuration
 echo "📦 Storing Product Service Secrets..."
@@ -62,15 +62,27 @@ vault kv put secret/wingyip-srs/staging/shared/rabbitmq \
 echo "👤 Storing Active Directory Secrets..."
 
 vault kv put secret/wingyip-srs/staging/shared/activedirectory \
+  ldapserver="vm-eng-st-03.inapp.com" \
+  ldapport="389" \
   binduser="Administrator@inapp.com" \
   password="admin@123" \
   userprincipalname="Administrator" \
-  username="Administrator@inapp.com"
+  username="Administrator@inapp.com" \
+  domain="inapp.com" \
+  basedn="DC=inapp,DC=com"
+
+# ElasticSearch Configuration (Shared)
+echo "🔍 Storing ElasticSearch Secrets..."
+
+vault kv put secret/wingyip-srs/staging/shared/elasticsearch \
+  url="http://10.10.80.77:32000/"
 
 # Keycloak Credentials
 echo "🔑 Storing Keycloak Secrets..."
 
 vault kv put secret/wingyip-srs/staging/authentication/keycloak \
+  baseurl="http://10.10.80.77:30791/realms/{realm}/protocol/openid-connect" \
+  adminbaseurl="http://10.10.80.77:30791/admin/realms" \
   clientsecretweb="rOkAvgIuGrfTbkvBi48IUXGzV50pvZNa" \
   clientsecretmobile="eWtwZ2sVf1H8V53SXjbpnzJbDujMhmlP" \
   adminusername="superadmin" \
