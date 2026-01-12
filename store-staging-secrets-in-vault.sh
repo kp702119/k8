@@ -81,8 +81,8 @@ vault kv put secret/wingyip-srs/staging/shared/elasticsearch \
 echo "🔑 Storing Keycloak Secrets..."
 
 vault kv put secret/wingyip-srs/staging/authentication/keycloak \
-  baseurl="http://10.10.80.77:30791/realms/{realm}/protocol/openid-connect" \
-  adminbaseurl="http://10.10.80.77:30791/admin/realms" \
+  baseurl="https://staging-wingyip-keycloak.inapp.com/realms/{realm}/protocol/openid-connect" \
+  adminbaseurl="https://staging-wingyip-keycloak.inapp.com/admin/realms" \
   clientsecretweb="rOkAvgIuGrfTbkvBi48IUXGzV50pvZNa" \
   clientsecretmobile="eWtwZ2sVf1H8V53SXjbpnzJbDujMhmlP" \
   adminusername="superadmin" \
