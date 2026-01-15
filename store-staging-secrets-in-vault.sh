@@ -62,14 +62,14 @@ vault kv put secret/wingyip-srs/staging/shared/rabbitmq \
 echo "👤 Storing Active Directory Secrets..."
 
 vault kv put secret/wingyip-srs/staging/shared/activedirectory \
-  ldapserver="vm-eng-st-03.inapp.com" \
+  ldapserver="10.10.80.75" \
   ldapport="389" \
-  binduser="Administrator@inapp.com" \
+  binduser="cn=Administrator,cn=Users,dc=wingyip,dc=local" \
   password="admin@123" \
   userprincipalname="Administrator" \
-  username="Administrator@inapp.com" \
-  domain="inapp.com" \
-  basedn="DC=inapp,DC=com"
+  username="Administrator" \
+  domain="wingyip.local" \
+  basedn="dc=wingyip,dc=local"
 
 # ElasticSearch Configuration (Shared)
 echo "🔍 Storing ElasticSearch Secrets..."
